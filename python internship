@@ -1,0 +1,480 @@
+from datetime import datetime
+from typing import List, Dict, Optional
+import json
+
+class Person:
+    def _init_(self, user_id: str, name: str, age: int, gender: str, is_known: bool = False):
+        self.user_id = user_id
+        self.name = name
+        self.age = age
+        self.gender = gender.lower()
+        self.is_known = is_known
+        self.joined_events = []
+    
+    def _str_(self):
+        status = "Known" if self.is_known else "Unknown"
+        return f"{self.name} (ID: {self.user_id}, Age: {self.age}, Gender: {self.gender.title()}, Status: {status})"
+
+class Event:
+    def _init_(self, event_id: str, title: str, organizer: Person, 
+                 min_members: int = 1, max_members: int = None, gender_restriction: str = None, 
+                 min_age: int = None, max_age: int = None):
+        self.event_id = event_id
+        self.title = title
+        self.organizer = organizer
+        self.min_members = min_members
+        self.max_members = max_members
+        self.gender_restriction = gender_restriction.lower() if gender_restriction else None
+        self.min_age = min_age
+        self.max_age = max_age
+        self.participants = [organizer] 
+        self.created_at = datetime.now()
+    
+    def can_join(self, person: Person) -> tuple[bool, str]:
+        if person in self.participants:
+            return False, "Already joined this event"
+        if self.max_members and len(self.participants) >= self.max_members:
+            return False, "Event is full"
+        
+        if self.gender_restriction and person.gender != self.gender_restriction:
+            return False, f"Event is restricted to {self.gender_restriction} only"
+        
+        if self.min_age and person.age < self.min_age:
+            return False, f"Minimum age requirement: {self.min_age}"
+        
+        if self.max_age and person.age > self.max_age:
+            return False, f"Maximum age limit: {self.max_age}"
+        
+        return True, "Can join"
+    
+    def add_participant(self, person: Person) -> bool:
+        can_join, reason = self.can_join(person)
+        if can_join:
+            self.participants.append(person)
+            person.joined_events.append(self.event_id)
+            return True
+        return False
+    
+    def remove_participant(self, person: Person) -> bool:
+        if person in self.participants and person != self.organizer:
+            self.participants.remove(person)
+            person.joined_events.remove(self.event_id)
+            return True
+        return False
+    
+    def _str_(self):
+        restrictions = []
+        if self.gender_restriction:
+            restrictions.append(f"Gender: {self.gender_restriction.title()}")
+        if self.min_age:
+            restrictions.append(f"Min Age: {self.min_age}")
+        if self.max_age:
+            restrictions.append(f"Max Age: {self.max_age}")
+        
+        restriction_str = f" | Restrictions: {', '.join(restrictions)}" if restrictions else ""
+        
+        return (f"Event: {self.title}\n"
+                f"Organizer: {self.organizer.name}\n"
+                f"Participants: {len(self.participants)}/{self.max_members or '∞'} "
+                f"(Min: {self.min_members}){restriction_str}")
+
+class EventManagementSystem:
+    def _init_(self):
+        self.people: Dict[str, Person] = {}
+        self.events: Dict[str, Event] = {}
+        self.next_person_id = 1
+        self.next_event_id = 1
+    
+    def create_person(self, name: str, age: int, gender: str, is_known: bool = False) -> Person:
+        user_id = f"USER_{self.next_person_id:03d}"
+        person = Person(user_id, name, age, gender, is_known)
+        self.people[user_id] = person
+        self.next_person_id += 1
+        return person
+    
+    def read_person(self, user_id: str) -> Optional[Person]:
+        return self.people.get(user_id)
+    
+    def update_person(self, user_id: str, **kwargs) -> bool:
+        person = self.people.get(user_id)
+        if not person:
+            return False
+        
+        for key, value in kwargs.items():
+            if hasattr(person, key):
+                setattr(person, key, value)
+        return True
+    
+    def delete_person(self, user_id: str) -> bool:
+        person = self.people.get(user_id)
+        if not person:
+            return False
+        
+        for event in self.events.values():
+            if person in event.participants:
+                event.remove_participant(person)
+        
+        del self.people[user_id]
+        return True
+    
+    def create_event(self, organizer_id: str, title: str, 
+                    min_members: int = 1, max_members: int = None, 
+                    gender_restriction: str = None, min_age: int = None, 
+                    max_age: int = None) -> Optional[Event]:
+        organizer = self.people.get(organizer_id)
+        if not organizer:
+            return None
+        
+        event_id = f"EVENT_{self.next_event_id:03d}"
+        event = Event(event_id, title, organizer, 
+                     min_members, max_members, gender_restriction, min_age, max_age)
+        self.events[event_id] = event
+        self.next_event_id += 1
+        return event
+    
+    def read_event(self, event_id: str) -> Optional[Event]:
+        return self.events.get(event_id)
+    
+    def update_event(self, event_id: str, **kwargs) -> bool:
+        event = self.events.get(event_id)
+        if not event:
+            return False
+        
+        for key, value in kwargs.items():
+            if hasattr(event, key) and key not in ['event_id', 'organizer', 'participants', 'created_at']:
+                setattr(event, key, value)
+        return True
+    
+    def delete_event(self, event_id: str) -> bool:
+        event = self.events.get(event_id)
+        if not event:
+            return False
+        
+        for participant in event.participants:
+            if event_id in participant.joined_events:
+                participant.joined_events.remove(event_id)
+        
+        del self.events[event_id]
+        return True
+    
+    def join_event(self, user_id: str, event_id: str) -> tuple[bool, str]:
+        person = self.people.get(user_id)
+        event = self.events.get(event_id)
+        
+        if not person:
+            return False, "Person not found"
+        if not event:
+            return False, "Event not found"
+        
+        can_join, reason = event.can_join(person)
+        if can_join:
+            event.add_participant(person)
+            return True, "Successfully joined event"
+        return False, reason
+    
+    def leave_event(self, user_id: str, event_id: str) -> tuple[bool, str]:
+        person = self.people.get(user_id)
+        event = self.events.get(event_id)
+        
+        if not person:
+            return False, "Person not found"
+        if not event:
+            return False, "Event not found"
+        
+        if event.remove_participant(person):
+            return True, "Successfully left event"
+        return False, "Cannot leave event (not a participant or you're the organizer)"
+    
+    def list_people(self) -> List[Person]:
+        return list(self.people.values())
+
+def main():
+    system = EventManagementSystem()
+    
+    print("Welcome to the Event Management System!")
+    print("=" * 50)
+    
+    while True:
+        print("\nMAIN MENU:")
+        print("1. Manage People")
+        print("2. Manage Events")
+        print("3. View Statistics")
+        print("4. Exit")
+        
+        choice = input("\nSelect an option (1-4): ").strip()
+        
+        if choice == "1":
+            manage_people(system)
+        elif choice == "2":
+            manage_events(system)
+        elif choice == "3":
+            view_statistics(system)
+        elif choice == "4":
+            print("Thank you for using the Event Management System!")
+            break
+        else:
+            print("Invalid choice. Please try again.")
+
+def manage_people(system):
+    while True:
+        print("\nPEOPLE MANAGEMENT:")
+        print("1. Add New Person")
+        print("2. List All People")
+        print("3. Update Person")
+        print("4. Delete Person")
+        print("5. Back to Main Menu")
+        
+        choice = input("\nSelect an option (1-5): ").strip()
+        
+        if choice == "1":
+            add_person(system)
+        elif choice == "2":
+            list_people(system)
+        elif choice == "3":
+            update_person(system)
+        elif choice == "4":
+            delete_person(system)
+        elif choice == "5":
+            break
+        else:
+            print("Invalid choice. Please try again.")
+
+def add_person(system):
+    print("\nAdding New Person:")
+    name = input("Enter name: ").strip()
+    
+    try:
+        age = int(input("Enter age: "))
+    except ValueError:
+        print("Invalid age. Please enter a number.")
+        return
+    
+    gender = input("Enter gender (male/female/other): ").strip().lower()
+    if gender not in ['male', 'female', 'other']:
+        print("Invalid gender. Please enter male, female, or other.")
+        return
+    
+    is_known = input("Is this person known to you? (y/n): ").strip().lower() == 'y'
+    
+    person = system.create_person(name, age, gender, is_known)
+    print(f"Person added successfully! ID: {person.user_id}")
+
+def list_people(system):
+    people = system.list_people()
+    if not people:
+        print("No people found.")
+        return
+    
+    print(f"\nAll People ({len(people)} total):")
+    for person in people:
+        print(f"  • {person}")
+
+def update_person(system):
+    user_id = input("Enter person ID to update: ").strip()
+    person = system.read_person(user_id)
+    
+    if not person:
+        print("Person not found.")
+        return
+    
+    print(f"Current details: {person}")
+    print("Enter new values (press Enter to keep current value):")
+    
+    name = input(f"Name [{person.name}]: ").strip()
+    if name:
+        person.name = name
+    
+    age_input = input(f"Age [{person.age}]: ").strip()
+    if age_input:
+        try:
+            person.age = int(age_input)
+        except ValueError:
+            print("Invalid age format.")
+            return
+    
+    gender_input = input(f"Gender [{person.gender}]: ").strip().lower()
+    if gender_input and gender_input in ['male', 'female', 'other']:
+        person.gender = gender_input
+    
+    known_input = input(f"Known status [{'Yes' if person.is_known else 'No'}] (y/n): ").strip().lower()
+    if known_input in ['y', 'n']:
+        person.is_known = known_input == 'y'
+    
+    print("Person updated successfully!")
+
+def delete_person(system):
+    user_id = input("Enter person ID to delete: ").strip()
+    person = system.read_person(user_id)
+    
+    if not person:
+        print("Person not found.")
+        return
+    
+    print(f"About to delete: {person}")
+    confirm = input("Are you sure? (y/n): ").strip().lower()
+    
+    if confirm == 'y':
+        if system.delete_person(user_id):
+            print("Person deleted successfully!")
+        else:
+            print("Failed to delete person.")
+    else:
+        print("Deletion cancelled.")
+
+def manage_events(system):
+    while True:
+        print("\nEVENT MANAGEMENT:")
+        print("1. Create New Event")
+        print("2. View Event Details")
+        print("3. Update Event")
+        print("4. Delete Event")
+        print("5. Join Event")
+        print("6. Leave Event")
+        print("7. Back to Main Menu")
+        
+        choice = input("\nSelect an option (1-7): ").strip()
+        
+        if choice == "1":
+            create_event(system)
+        elif choice == "2":
+            view_event_details(system)
+        elif choice == "3":
+            update_event(system)
+        elif choice == "4":
+            delete_event(system)
+        elif choice == "5":
+            join_event(system)
+        elif choice == "6":
+            leave_event(system)
+        elif choice == "7":
+            break
+        else:
+            print("Invalid choice. Please try again.")
+
+def create_event(system):
+    if not system.people:
+        print("No people in system. Please add people first.")
+        return
+    
+    print("\nCreating New Event:")
+    organizer_id = input("Enter organizer ID: ").strip()
+    
+    if not system.read_person(organizer_id):
+        print("Organizer not found.")
+        return
+    
+    title = input("Event title: ").strip()
+    
+    try:
+        min_members = int(input("Minimum members required (default 1): ") or "1")
+        max_members_input = input("Maximum members (press Enter for unlimited): ").strip()
+        max_members = int(max_members_input) if max_members_input else None
+    except ValueError:
+        print("Invalid number format.")
+        return
+    
+    gender_restriction = input("Gender restriction (male/female/other, or press Enter for none): ").strip().lower()
+    gender_restriction = gender_restriction if gender_restriction in ['male', 'female', 'other'] else None
+    
+    try:
+        min_age_input = input("Minimum age (press Enter for none): ").strip()
+        min_age = int(min_age_input) if min_age_input else None
+        
+        max_age_input = input("Maximum age (press Enter for none): ").strip()
+        max_age = int(max_age_input) if max_age_input else None
+    except ValueError:
+        print("Invalid age format.")
+        return
+    
+    event = system.create_event(organizer_id, title, min_members, 
+                               max_members, gender_restriction, min_age, max_age)
+    
+    if event:
+        print(f"Event created successfully! ID: {event.event_id}")
+    else:
+        print("Failed to create event.")
+
+def view_event_details(system):
+    event_id = input("Enter event ID: ").strip()
+    event = system.read_event(event_id)
+    
+    if not event:
+        print("Event not found.")
+        return
+    
+    print(f"\nEvent Details:")
+    print(event)
+    print(f"\nParticipants ({len(event.participants)}):")
+    for participant in event.participants:
+        role = " (Organizer)" if participant == event.organizer else ""
+        print(f"  • {participant.name}{role}")
+
+def update_event(system):
+    event_id = input("Enter event ID to update: ").strip()
+    event = system.read_event(event_id)
+    
+    if not event:
+        print("Event not found.")
+        return
+    
+    print(f"Current event: {event.title}")
+    print("Enter new values (press Enter to keep current value):")
+    
+    title = input(f"Title [{event.title}]: ").strip()
+    if title:
+        event.title = title
+    
+    print("Event updated successfully!")
+
+def delete_event(system):
+    event_id = input("Enter event ID to delete: ").strip()
+    event = system.read_event(event_id)
+    
+    if not event:
+        print("Event not found.")
+        return
+    
+    print(f"About to delete event: {event.title}")
+    confirm = input("Are you sure? (y/n): ").strip().lower()
+    
+    if confirm == 'y':
+        if system.delete_event(event_id):
+            print("Event deleted successfully!")
+        else:
+            print("Failed to delete event.")
+    else:
+        print("Deletion cancelled.")
+
+def join_event(system):
+    user_id = input("Enter your user ID: ").strip()
+    event_id = input("Enter event ID to join: ").strip()
+    
+    success, message = system.join_event(user_id, event_id)
+    if success:
+        print(f"Success: {message}")
+    else:
+        print(f"Error: {message}")
+
+def leave_event(system):
+    user_id = input("Enter your user ID: ").strip()
+    event_id = input("Enter event ID to leave: ").strip()
+    
+    success, message = system.leave_event(user_id, event_id)
+    if success:
+        print(f"Success: {message}")
+    else:
+        print(f"Error: {message}")
+
+def view_statistics(system):
+    total_people = len(system.people)
+    total_events = len(system.events)
+    known_people = sum(1 for person in system.people.values() if person.is_known)
+    
+    print(f"\nSYSTEM STATISTICS:")
+    print(f"Total People: {total_people}")
+    print(f"Known People: {known_people}")
+    print(f"Unknown People: {total_people - known_people}")
+    print(f"Total Events: {total_events}")
+
+if _name_ == "_main_":
+    main()
